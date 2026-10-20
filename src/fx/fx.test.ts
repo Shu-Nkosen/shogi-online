@@ -42,14 +42,14 @@ describe('promotion effect setting', () => {
   });
 
   it('resolves playback length and the calm reduced-motion version', () => {
-    expect(resolvePlayback('full', false)).toEqual({ kind: 'cinematic', duration: 10, calm: false });
-    expect(resolvePlayback(null, false)).toEqual({ kind: 'cinematic', duration: 10, calm: false });
-    expect(resolvePlayback('short', false)).toEqual({ kind: 'cinematic', duration: 3.8, calm: false });
+    expect(resolvePlayback('full', false)).toEqual({ kind: 'cinematic', duration: 9.6, calm: false });
+    expect(resolvePlayback(null, false)).toEqual({ kind: 'cinematic', duration: 9.6, calm: false });
+    expect(resolvePlayback('short', false)).toEqual({ kind: 'cinematic', duration: 3.2, calm: false });
     expect(resolvePlayback('off', false)).toEqual({ kind: 'flip' });
     // 自分で選んでいないときだけ OS の「動きを減らす」で控えめ版になる
     expect(resolvePlayback(null, true)).toEqual({ kind: 'cinematic', duration: 2.6, calm: true });
-    expect(resolvePlayback('full', true)).toEqual({ kind: 'cinematic', duration: 10, calm: false });
-    expect(resolvePlayback('short', true)).toEqual({ kind: 'cinematic', duration: 3.8, calm: false });
+    expect(resolvePlayback('full', true)).toEqual({ kind: 'cinematic', duration: 9.6, calm: false });
+    expect(resolvePlayback('short', true)).toEqual({ kind: 'cinematic', duration: 3.2, calm: false });
     expect(resolvePlayback('off', true)).toEqual({ kind: 'flip' });
   });
 

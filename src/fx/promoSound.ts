@@ -82,17 +82,33 @@ function makeNoise(ctx: BaseAudioContext, seconds: number, rand: () => number): 
   return buffer;
 }
 
+/** 重い生成（残響・ノイズ）は AudioContext ごとに一度だけ作って使い回す */
+const bufferCache = new WeakMap<BaseAudioContext, Map<string, AudioBuffer>>();
+function cached(ctx: BaseAudioContext, key: string, make: () => AudioBuffer): AudioBuffer {
+  let byCtx = bufferCache.get(ctx);
+  if (!byCtx) bufferCache.set(ctx, (byCtx = new Map()));
+  let buf = byCtx.get(key);
+  if (!buf) byCtx.set(key, (buf = make()));
+  return buf;
+}
+const impulseFor = (ctx: BaseAudioContext, calm: boolean) =>
+  cached(ctx, calm ? 'ir-calm' : 'ir-full', () => makeImpulse(ctx, calm ? 2.6 : 3.6, calm ? 2.4 : 1.9, rng(calm ? 0x1c4 : 0x1f0)));
+const noiseFor = (ctx: BaseAudioContext) => cached(ctx, 'noise', () => makeNoise(ctx, 2.5, rng(0x7a1)));
+
+/** 最初の操作のあと、手すきの時間に演出用の音素材を作っておく（初回再生の遅れを防ぐ） */
+export function warmPromoSound(ctx: BaseAudioContext): void {
+  impulseFor(ctx, false);
+  impulseFor(ctx, true);
+  noiseFor(ctx);
+}
+
 const C3 = 130.81;
 const note = (semitones: number) => C3 * 2 ** (semitones / 12);
 
-export function schedulePromoSound(
-  ctx: BaseAudioContext,
-  out: AudioNode,
-  tl: PromoSoundTimes,
-  calm: boolean,
-  base: number,
-  options: Options = {},
-): ScheduledSound {
+type Kit = ReturnType<typeof createKit>;
+
+/** 共通のミックス（バス・コンプ・リミッター・残響）と楽器を作る */
+function createKit(ctx: BaseAudioContext, out: AudioNode, calm: boolean, base: number, options: Options) {
   const rand = rng(options.seed ?? 0x5eed);
   const cutoff = options.cutoff ?? -Infinity;
   const T = (s: number) => base + s;
@@ -123,7 +139,7 @@ export function schedulePromoSound(
   const bus = ctx.createGain();
   bus.connect(glue);
   const reverb = ctx.createConvolver();
-  reverb.buffer = makeImpulse(ctx, calm ? 2.6 : 3.6, calm ? 2.4 : 1.9, rand);
+  reverb.buffer = impulseFor(ctx, calm);
   const send = ctx.createGain();
   send.gain.value = 1;
   const wet = ctx.createGain();
@@ -144,7 +160,7 @@ export function schedulePromoSound(
   delayOut.connect(bus);
   delayOut.connect(send);
 
-  const noiseBuf = makeNoise(ctx, 2.5, rand);
+  const noiseBuf = noiseFor(ctx);
 
   /** 音を出す口。パン・残響送り・ディレイ送りをまとめて作る */
   const voice = (amount: { wet?: number; pan?: number; echo?: number } = {}) => {
@@ -325,6 +341,43 @@ export function schedulePromoSound(
     noise(start, stop + 0.02, bp);
   };
 
+  return { ctx, rand, T, ok, sources, master, bus, send, delay, voice, env, osc, noise, filter, shaper, thump, bell, brass, choir, whoosh };
+}
+
+function finishKit(kit: Kit, tailEnd: number): ScheduledSound {
+  const { ctx, master, sources } = kit;
+  return {
+    tailEnd,
+    stop: (fade = 0.18) => {
+      const now = ctx.currentTime;
+      try {
+        master.gain.cancelScheduledValues(now);
+        master.gain.setValueAtTime(master.gain.value, now);
+        master.gain.linearRampToValueAtTime(0, now + fade);
+      } catch {
+        // 既に止まっている
+      }
+      for (const src of sources) {
+        try {
+          src.stop(now + fade + 0.02);
+        } catch {
+          // 開始前や停止済み
+        }
+      }
+    },
+  };
+}
+
+export function schedulePromoSound(
+  ctx: BaseAudioContext,
+  out: AudioNode,
+  tl: PromoSoundTimes,
+  calm: boolean,
+  base: number,
+  options: Options = {},
+): ScheduledSound {
+  const kit = createKit(ctx, out, calm, base, options);
+  const { rand, T, ok, sources, voice, env, osc, noise, filter, shaper, thump, bell, brass, choir, whoosh } = kit;
   let tailEnd = tl.end;
 
   if (calm) {
@@ -537,26 +590,251 @@ export function schedulePromoSound(
     tailEnd = tl.end + 2.2;
   }
 
-  return {
-    tailEnd,
-    stop: (fade = 0.18) => {
-      const now = ctx.currentTime;
-      try {
-        master.gain.cancelScheduledValues(now);
-        master.gain.setValueAtTime(master.gain.value, now);
-        master.gain.linearRampToValueAtTime(0, now + fade);
-      } catch {
-        // 既に止まっている
+  return finishKit(kit, tailEnd);
+}
+
+/** 和了風の成り演出の拍（ronTimeline.ts の RonTimeline と同じ形） */
+export interface RonSoundTimes {
+  tink: number;
+  slash: number;
+  bandIn: number;
+  eyesIn: number;
+  eyesGlint: number;
+  eyesOut: number;
+  bandOut: number;
+  girlIn: number;
+  fanHit: number;
+  girlOut: number;
+  impact: number;
+  flash: number;
+  flipEnd: number;
+  kanji: number;
+  slam: number;
+  sub: number;
+  confettiEnd: number;
+  climaxEnd: number;
+  snap: number;
+  land: number;
+  end: number;
+  eyes: boolean;
+}
+
+/**
+ * 「止める → 斬る → 目元 → カットイン → 叫び → 戻る」の拍に合わせた効果音。
+ * 静止の「チン」と無音、斬撃の「シャッ」、目元のきらめき、カットインの一撃、
+ * 爆発の「ドーン」、戻りの吸い込みと着地の「カチャーン」。声は録音せず、母音の合成だけ。
+ */
+export function scheduleRonSound(
+  ctx: BaseAudioContext,
+  out: AudioNode,
+  tl: RonSoundTimes,
+  base: number,
+  options: Options = {},
+): ScheduledSound {
+  const kit = createKit(ctx, out, false, base, options);
+  const { rand, T, ok, voice, env, osc, noise, filter, shaper, thump, bell, brass, choir, whoosh } = kit;
+
+  /** かわいい声っぽいチャイム：母音フォルマントを「あ→い」へ動かしながら音程を上げる */
+  const chirp = (start: number, notes: [number, number][], peak: number) => {
+    if (!ok(start)) return;
+    const v = voice({ wet: 0.45, echo: 0.2, pan: -0.15 });
+    let t = start;
+    for (const [semi, length] of notes) {
+      const f = note(semi);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(FLOOR, T(t));
+      g.gain.exponentialRampToValueAtTime(peak, T(t + 0.025));
+      g.gain.setValueAtTime(peak, T(t + length * 0.6));
+      g.gain.exponentialRampToValueAtTime(FLOOR, T(t + length));
+      const f1 = filter('bandpass', 850, 7, v);
+      const f2 = filter('bandpass', 1250, 9, v);
+      f1.frequency.setValueAtTime(850, T(t));
+      f1.frequency.exponentialRampToValueAtTime(380, T(t + length * 0.8));
+      f2.frequency.setValueAtTime(1250, T(t));
+      f2.frequency.exponentialRampToValueAtTime(2500, T(t + length * 0.8));
+      const amp = ctx.createGain();
+      amp.gain.value = 4;
+      amp.connect(f1);
+      amp.connect(f2);
+      g.connect(amp);
+      const sine = ctx.createGain();
+      sine.gain.value = 0.35;
+      sine.connect(v);
+      g.connect(sine);
+      const vib = ctx.createOscillator();
+      vib.frequency.value = 7;
+      const depth = ctx.createGain();
+      depth.gain.value = 22;
+      vib.connect(depth);
+      vib.start(T(t));
+      vib.stop(T(t + length + 0.05));
+      kit.sources.push(vib);
+      for (const type of ['sawtooth', 'triangle'] as const) {
+        const o = osc(type, f * 0.94, t, t + length + 0.05, g);
+        o.frequency.exponentialRampToValueAtTime(f, T(t + 0.05));
+        depth.connect(o.detune);
       }
-      for (const src of sources) {
-        try {
-          src.stop(now + fade + 0.02);
-        } catch {
-          // 開始前や停止済み
-        }
-      }
-    },
+      t += length * 0.92;
+    }
   };
+
+  /** カットイン・衝撃の「バシッ」：キック＋スネア風ノイズ */
+  const hit = (start: number, peak: number) => {
+    if (!ok(start)) return;
+    const v = voice({ wet: 0.4 });
+    thump(start, 170, 46, 0.1, peak, 0.35, v);
+    const sn = ctx.createGain();
+    sn.connect(shaper(2.5, v));
+    env(sn.gain, start, 0.002, peak * 0.6, 0.2);
+    noise(start, start + 0.25, filter('bandpass', 1900, 0.9, sn));
+  };
+
+  // 1) 時が止まる：テープが止まるような下降音 → 澄んだ「チン」 → 無音
+  if (ok(0)) {
+    const g = ctx.createGain();
+    g.connect(filter('lowpass', 900, 0.7, voice({ wet: 0.3 })));
+    env(g.gain, 0, 0.01, 0.22, 0.42);
+    const o = osc('triangle', 520, 0, 0.5, g);
+    o.frequency.exponentialRampToValueAtTime(48, T(0.45));
+  }
+  bell(tl.tink, note(55), 0.16, 2.6, 0.1, 0.9);
+  bell(tl.tink + 0.004, note(62), 0.06, 1.8, -0.1, 0.9);
+
+  if (tl.eyes) {
+    // 2) 斬撃：鋭い「シャッ」＋金属の「シャキン」、帯が叩きつけられる低音
+    whoosh(tl.slash - 0.05, tl.slash + 0.1, 1800, 9000, 0.42, -0.8, 0.8, 1.6);
+    bell(tl.slash + 0.02, note(64), 0.09, 0.8, 0.5, 0.6);
+    bell(tl.slash + 0.02, note(69), 0.06, 0.6, 0.6, 0.6);
+    thump(tl.bandIn, 120, 50, 0.1, 0.55, 0.3);
+    // 3) 目元が滑り込む「シュッ」→ ほぼ止まる間の低い溜め → きらめき → ムチで抜ける
+    whoosh(tl.eyesIn - 0.04, tl.eyesIn + 0.24, 6000, 900, 0.32, 0.8, -0.2);
+    if (ok(tl.eyesIn + 0.2)) {
+      const g = ctx.createGain();
+      g.connect(voice({ wet: 0.5 }));
+      g.gain.setValueAtTime(FLOOR, T(tl.eyesIn + 0.2));
+      g.gain.exponentialRampToValueAtTime(0.06, T(tl.eyesOut - 0.1));
+      g.gain.exponentialRampToValueAtTime(FLOOR, T(tl.eyesOut + 0.05));
+      for (const st of [0, 7, 12]) osc('sawtooth', note(st - 12), tl.eyesIn + 0.2, tl.eyesOut + 0.1, filter('lowpass', 600, 2, g));
+    }
+    [52, 56, 59, 64, 68, 71].forEach((st, i) => bell(tl.eyesGlint + i * 0.045, note(st), 0.07, 1.2, (i % 2 ? 1 : -1) * 0.4, 0.7, 0.3));
+    if (ok(tl.eyesGlint)) {
+      const g = ctx.createGain();
+      g.connect(voice({ wet: 0.7 }));
+      env(g.gain, tl.eyesGlint, 0.01, 0.14, 0.9);
+      noise(tl.eyesGlint, tl.eyesGlint + 1, filter('highpass', 8000, 0.7, g));
+    }
+    whoosh(tl.eyesOut - 0.02, tl.eyesOut + 0.14, 1200, 7000, 0.36, 0.2, -0.9, 1.4);
+    thump(tl.bandOut, 90, 45, 0.1, 0.3, 0.25);
+  }
+
+  // 4) カットイン：飛び込みの吸い込み → 扇を突き出す瞬間に一撃＋金管＋きらきら＋声チャイム
+  whoosh(tl.girlIn - 0.12, tl.fanHit, 500, 6500, 0.34, 0.9, 0);
+  hit(tl.fanHit, 0.95);
+  brass(tl.fanHit, [note(7), note(12), note(16), note(19), note(24)], 0.075, 0.35, 0.8, 0.5);
+  [36, 40, 43, 48, 52, 55].forEach((st, i) => bell(tl.fanHit + 0.03 + i * 0.04, note(st), 0.05, 0.9, (i / 5) * 1.2 - 0.6, 0.5, 0.25));
+  chirp(tl.fanHit + 0.12, [[31, 0.12], [36, 0.3]], 0.05);
+  // 見せ場の間：明るいパッド＋跳ねるアルペジオ、最後は太鼓の連打で叫びへ
+  choir(tl.fanHit + 0.05, tl.girlOut, [note(12), note(16), note(19), note(23)], 0.022, 0.4, 0.3);
+  {
+    const step = 0.12;
+    const pattern = [24, 31, 28, 36, 31, 40, 36, 43];
+    for (let t = tl.fanHit + 0.36, i = 0; t < tl.girlOut - 0.4; t += step, i += 1) {
+      bell(t, note(pattern[i % pattern.length]!), 0.032, 0.5, i % 2 ? 0.45 : -0.45, 0.35, 0.2);
+    }
+    let gap = 0.16;
+    for (let t = tl.girlOut - 0.75; t < tl.impact - 0.08; t += gap) {
+      const k = (t - (tl.girlOut - 0.75)) / Math.max(0.1, tl.impact - tl.girlOut + 0.75);
+      thump(t, 140, 60, 0.08, 0.25 + k * 0.5, 0.18, voice({ wet: 0.3 }));
+      gap = Math.max(0.055, gap * 0.85);
+    }
+  }
+  whoosh(tl.girlOut - 0.02, tl.girlOut + 0.18, 5000, 700, 0.3, 0, -0.9);
+
+  // 5) 叫び：衝撃コマの「バチッ」→ 閃光の大爆発 → 裏返り → 「成」叩きつけ
+  if (ok(tl.impact)) {
+    const g = ctx.createGain();
+    g.connect(voice({ wet: 0.5 }));
+    env(g.gain, tl.impact, 0.001, 0.9, 0.14);
+    noise(tl.impact, tl.impact + 0.2, filter('highpass', 1400, 0.8, g));
+    thump(tl.impact, 2400, 180, 0.03, 0.5, 0.05);
+  }
+  if (ok(tl.flash)) {
+    const boom = voice({ wet: 0.55 });
+    const sub = ctx.createGain();
+    sub.connect(filter('lowpass', 900, 0.7, shaper(3, boom)));
+    env(sub.gain, tl.flash, 0.004, 1, 2.2);
+    const o = osc('sine', 165, tl.flash, tl.flash + 2.4, sub);
+    o.frequency.exponentialRampToValueAtTime(27, T(tl.flash + 1.4));
+    thump(tl.flash, 230, 44, 0.12, 1, 0.45, boom);
+    const blast = ctx.createGain();
+    blast.connect(boom);
+    env(blast.gain, tl.flash, 0.006, 0.8, 2.2);
+    const lp = filter('lowpass', 9000, 0.6, blast);
+    lp.frequency.setValueAtTime(9000, T(tl.flash));
+    lp.frequency.exponentialRampToValueAtTime(260, T(tl.flash + 1.7));
+    noise(tl.flash, tl.flash + 2.4, lp);
+  }
+  whoosh(tl.flash + 0.04, tl.flipEnd + 0.1, 2600, 500, 0.24, -0.7, 0.7);
+  whoosh(tl.kanji - 0.05, tl.slam + 0.005, 500, 5200, 0.28, 0, 0, 1.4);
+  if (ok(tl.slam)) {
+    const taiko = voice({ wet: 0.5 });
+    thump(tl.slam, 120, 52, 0.24, 1, 0.75, taiko);
+    thump(tl.slam, 64, 40, 0.3, 0.7, 1.1, taiko);
+    const cym = ctx.createGain();
+    cym.connect(voice({ wet: 0.6, pan: 0.15 }));
+    env(cym.gain, tl.slam, 0.003, 0.3, 2);
+    noise(tl.slam, tl.slam + 2.2, filter('highpass', 5200, 0.7, cym));
+  }
+  brass(tl.slam, [note(0), note(7), note(12), note(16), note(19), note(24)], 0.1, 0.5, 1.2, 0.45);
+  const climaxEnd = Math.max(tl.slam + 0.4, tl.climaxEnd);
+  choir(tl.slam + 0.05, Math.max(tl.slam + 0.3, tl.sub - 0.1), [note(12), note(16), note(19), note(24)], 0.028, 0.6, 0.5);
+  if (tl.sub > tl.slam + 0.5) {
+    choir(tl.sub - 0.15, climaxEnd, [note(17), note(21), note(24), note(29)], 0.03, 0.35, 0.5);
+    brass(tl.sub, [note(5), note(12), note(17), note(21), note(24)], 0.075, 0.3, 0.9, 0.5);
+  }
+  {
+    const scale = [24, 26, 28, 31, 33, 36, 38, 40, 43, 45, 48];
+    const step = 0.085;
+    const count = Math.max(0, Math.floor((tl.confettiEnd - tl.slam - 0.22) / step));
+    for (let i = 0; i < count; i += 1) {
+      const cycle = scale.length * 2 - 2;
+      const k = i % cycle;
+      const idx = k < scale.length ? k : cycle - k;
+      bell(tl.slam + 0.22 + i * step, note(scale[idx]!), 0.045 + 0.025 * (idx / scale.length), 0.6, i % 2 ? 0.55 : -0.55, 0.45, 0.3);
+    }
+  }
+
+  // 6) 一瞬で戻る：逆再生のような吸い込み → 着地の「カッ・チャリーン」
+  if (ok(tl.snap)) {
+    const g = ctx.createGain();
+    g.connect(voice({ wet: 0.3 }));
+    g.gain.setValueAtTime(FLOOR, T(tl.snap));
+    g.gain.exponentialRampToValueAtTime(0.4, T(tl.land - 0.01));
+    g.gain.linearRampToValueAtTime(0, T(tl.land));
+    const bp = filter('bandpass', 700, 1.2, g);
+    bp.frequency.setValueAtTime(700, T(tl.snap));
+    bp.frequency.exponentialRampToValueAtTime(7000, T(tl.land));
+    noise(tl.snap, tl.land + 0.02, bp);
+  }
+  if (ok(tl.land)) {
+    const wood = ctx.createGain();
+    wood.connect(voice({ wet: 0.2 }));
+    env(wood.gain, tl.land, 0.001, 0.8, 0.05);
+    noise(tl.land, tl.land + 0.08, filter('bandpass', 2300, 3.2, wood));
+    thump(tl.land, 1900, 700, 0.012, 0.35, 0.03);
+    thump(tl.land, 110, 48, 0.12, 0.6, 0.2);
+  }
+  bell(tl.land + 0.03, note(40), 0.11, 1.3, -0.25, 0.55, 0.3);
+  bell(tl.land + 0.09, note(47), 0.1, 1.5, 0.25, 0.55, 0.3);
+  bell(tl.land + 0.15, note(52), 0.065, 1.7, 0, 0.6, 0.3);
+  void rand;
+  return finishKit(kit, tl.end + 2);
+}
+
+export async function renderRonSound(tl: RonSoundTimes, sampleRate = 44100): Promise<AudioBuffer> {
+  const ctx = new OfflineAudioContext(2, Math.ceil((tl.end + 2.2) * sampleRate), sampleRate);
+  scheduleRonSound(ctx, ctx.destination, tl, 0);
+  return ctx.startRendering();
 }
 
 /** 確認・書き出し用：演出全体の音を OfflineAudioContext で描く */

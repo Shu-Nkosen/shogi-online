@@ -30,7 +30,7 @@ interface PromotionCinematicProps {
   onDone: () => void;
 }
 
-const FROM_NAME: Record<PieceType, string> = {
+export const FROM_NAME: Record<PieceType, string> = {
   pawn: '歩兵',
   lance: '香車',
   knight: '桂馬',
@@ -40,7 +40,7 @@ const FROM_NAME: Record<PieceType, string> = {
   rook: '飛車',
   king: '玉将',
 };
-const TO_NAME: Record<PieceType, string> = {
+export const TO_NAME: Record<PieceType, string> = {
   pawn: 'と金',
   lance: '成香',
   knight: '成桂',
@@ -168,7 +168,7 @@ function buildParticles(seed: number, tl: Timeline, calm: boolean, lite: boolean
   return { gather, sparks, debris, rings, confetti };
 }
 
-function makeGlowSprite(): HTMLCanvasElement {
+export function makeGlowSprite(): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
   const g = c.getContext('2d')!;

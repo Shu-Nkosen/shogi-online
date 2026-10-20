@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { schedulePromoSound } from './promoSound.ts';
+import { schedulePromoSound, scheduleRonSound } from './promoSound.ts';
+import { RON_FULL, RON_SHORT } from './ronTimeline.ts';
 import { CALM_TIMELINE, FULL_TIMELINE, SHORT_TIMELINE } from './timeline.ts';
 
 /** Web Audio の最小モック：音源がいつ鳴り始めるかと、音量の予約を記録する */
@@ -81,5 +82,43 @@ describe('promotion sound', () => {
     const { handle } = run();
     expect(() => handle.stop(0.2)).not.toThrow();
     expect(handle.tailEnd).toBeGreaterThan(FULL_TIMELINE.end);
+  });
+});
+
+describe('和了風 sound', () => {
+  const base = 3;
+  const run = (tl = RON_FULL, cutoff?: number) => {
+    const { ctx, starts } = mockContext();
+    const handle = scheduleRonSound(ctx, {} as AudioNode, tl, base, { cutoff });
+    return { starts: starts.map((s) => s.at - base), handle };
+  };
+  const has = (starts: number[], t: number) => starts.some((s) => Math.abs(s - t) < 1e-6);
+
+  it('hits every visual beat of the full version', () => {
+    const { starts } = run();
+    for (const key of ['tink', 'bandIn', 'eyesGlint', 'fanHit', 'impact', 'flash', 'slam', 'land'] as const) {
+      expect([key, has(starts, RON_FULL[key])]).toEqual([key, true]);
+    }
+    expect(starts.every((s) => s >= 0 && s <= RON_FULL.end + 1)).toBe(true);
+  });
+
+  it('keeps the freeze nearly silent after the tink', () => {
+    const { starts } = run();
+    const during = starts.filter((s) => s > RON_FULL.tink + 0.05 && s < RON_FULL.slash - 0.15);
+    expect(during.length).toBeLessThanOrEqual(2);
+  });
+
+  it('drops the eye close-up sounds in the short version', () => {
+    const { starts } = run(RON_SHORT);
+    for (const key of ['fanHit', 'impact', 'flash', 'slam', 'land'] as const) expect(has(starts, RON_SHORT[key])).toBe(true);
+    expect(has(starts, RON_FULL.eyesGlint)).toBe(false);
+  });
+
+  it('skips the past when audio starts late and can be stopped', () => {
+    const { starts, handle } = run(RON_FULL, base + RON_FULL.girlOut);
+    expect(starts.every((s) => s >= RON_FULL.girlOut - 1e-3)).toBe(true);
+    expect(has(starts, RON_FULL.slam)).toBe(true);
+    expect(has(starts, RON_FULL.fanHit)).toBe(false);
+    expect(() => handle.stop()).not.toThrow();
   });
 });

@@ -7,6 +7,8 @@ import type { Color, Move, State } from '../engine/types.ts';
 import { cn } from '../lib/utils.ts';
 import { Koma, SsjAura } from './Koma.tsx';
 import { PromotionFx } from './PromotionFx.tsx';
+import { preloadRonArt, RonCinematic } from './RonCinematic.tsx';
+import { RON_FULL, RON_SHORT } from '../fx/ronTimeline.ts';
 import { PromotionCinematic } from './PromotionCinematic.tsx';
 import { loadPromoFxChoice, prefersReducedMotion, resolvePlayback } from '../fx/settings.ts';
 
@@ -55,6 +57,13 @@ export function BoardView({
   const king = inCheck ? findKing(state.board, state.turn) : -1;
   const files = flipped ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : [9, 8, 7, 6, 5, 4, 3, 2, 1];
   const ranks = flipped ? [9, 8, 7, 6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+  useEffect(() => {
+    // 成り演出のキャラ画像は盤面が出たあと手すきの時間に読み込む
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(preloadRonArt, { timeout: 2500 });
+    else window.setTimeout(preloadRonArt, 800);
+  }, []);
 
   useEffect(() => {
     if (!fx || fx.move.from === null) {
@@ -172,7 +181,18 @@ export function BoardView({
               <Koma type={fx.move.piece} color={mover} promoted={fx.move.alreadyPromoted} />
             </div>
           ) : null}
-          {fx && phase === 'flip' && playback.kind === 'cinematic' ? (
+          {fx && phase === 'flip' && playback.kind === 'cinematic' && !playback.calm ? (
+            <RonCinematic
+              key={fx.id}
+              move={fx.move}
+              color={mover}
+              invert={invertMover}
+              square={boardRef.current?.querySelector<HTMLElement>(`[data-testid="square-${fx.move.to}"]`) ?? null}
+              tl={Math.abs(playback.duration - RON_SHORT.end) < 1e-6 ? RON_SHORT : RON_FULL}
+              onDone={finish}
+            />
+          ) : null}
+          {fx && phase === 'flip' && playback.kind === 'cinematic' && playback.calm ? (
             <PromotionCinematic
               key={fx.id}
               move={fx.move}

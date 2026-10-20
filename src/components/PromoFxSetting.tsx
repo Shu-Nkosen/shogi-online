@@ -5,7 +5,7 @@ import { cn } from '../lib/utils.ts';
 const SHORT_LABEL: Record<PromoFxMode, string> = { full: 'フル', short: 'ショート', off: 'オフ' };
 const TITLE: Record<PromoFxMode, string> = {
   full: '約10秒のフル演出',
-  short: '約4秒の短い演出（溜めを省略）',
+  short: '約3秒の短い演出（カットインだけ）',
   off: '演出なし（駒が裏返るだけ）',
 };
 

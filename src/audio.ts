@@ -1,4 +1,4 @@
-import { schedulePromoSound, type PromoSoundTimes, type ScheduledSound } from './fx/promoSound.ts';
+import { schedulePromoSound, scheduleRonSound, warmPromoSound, type PromoSoundTimes, type RonSoundTimes, type ScheduledSound } from './fx/promoSound.ts';
 
 let enabled = typeof localStorage === 'undefined' || localStorage.getItem('shogi.sound') !== '0';
 let context: AudioContext | null = null;
@@ -97,25 +97,38 @@ const SILENT: SoundHandle = { stop: () => undefined, visualDelayMs: 0 };
  * 音声オフなら何もしない。AudioContext がまだ止まっていれば、再開した時点の位置から鳴らす。
  */
 export function startPromotionSound(tl: PromoSoundTimes, calm: boolean): SoundHandle {
+  return startScheduled((audio, base, cutoff) => schedulePromoSound(audio, audio.destination, tl, calm, base, { cutoff }));
+}
+
+/** 和了風の成り演出（フル／ショート）の効果音 */
+export function startRonSound(tl: RonSoundTimes): SoundHandle {
+  return startScheduled((audio, base, cutoff) => scheduleRonSound(audio, audio.destination, tl, base, { cutoff }));
+}
+
+function startScheduled(schedule: (audio: AudioContext, base: number, cutoff: number) => ScheduledSound): SoundHandle {
   const audio = getAudio();
   if (!audio) return SILENT;
   const lead = 0.04;
   const latency = Math.min(0.25, Math.max(0, (audio as AudioContext & { outputLatency?: number }).outputLatency || audio.baseLatency || 0));
   const startedAt = performance.now();
+  const running = audio.state === 'running';
   let scheduled: ScheduledSound | null = null;
   let stopped = false;
+  let audioBase = 0;
   const begin = () => {
     if (stopped || scheduled) return;
     // まだ鳴らせなかった時間ぶん進めて、映像と同じ位置から再生する
     const late = running ? 0 : (performance.now() - startedAt) / 1000;
-    const base = audio.currentTime + (running ? lead : 0.02) - late;
-    scheduled = schedulePromoSound(audio, audio.destination, tl, calm, base, { cutoff: audio.currentTime + 0.01 });
+    audioBase = audio.currentTime + (running ? lead : 0.02) - late;
+    scheduled = schedule(audio, audioBase, audio.currentTime + 0.01);
   };
-  const running = audio.state === 'running';
   if (running) begin();
   else void audio.resume().then(begin, () => undefined);
+  // 予約に時間がかかった遅い端末でもずれないよう、予約後の時刻から映像の開始を決める
+  // （負の値なら映像はその分だけ先へ進んだ位置から始まる）
+  const visualDelayMs = running ? (audioBase - audio.currentTime + latency) * 1000 : 0;
   return {
-    visualDelayMs: running ? (lead + latency) * 1000 : 0,
+    visualDelayMs,
     stop: (skipped = true) => {
       stopped = true;
       if (skipped) scheduled?.stop(0.2);
@@ -127,11 +140,22 @@ export function startPromotionSound(tl: PromoSoundTimes, calm: boolean): SoundHa
  * iPhone などは、利用者の操作の中で AudioContext を再開し、無音を一度鳴らさないと音が出ない。
  * 最初のタップ／キー入力で一度だけ解錠する。
  */
+let warmed = false;
+function warmLater(audio: AudioContext): void {
+  if (warmed) return;
+  warmed = true;
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+  const run = () => warmPromoSound(audio);
+  if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 3000 });
+  else window.setTimeout(run, 500);
+}
+
 export function installAudioUnlock(target: Document = document): void {
   const events = ['pointerdown', 'touchend', 'mousedown', 'keydown'] as const;
   const unlock = () => {
     const audio = getAudio();
     if (!audio) return;
+    warmLater(audio);
     try {
       const buffer = audio.createBuffer(1, 1, audio.sampleRate);
       const src = audio.createBufferSource();

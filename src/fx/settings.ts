@@ -1,9 +1,11 @@
+import { RON_FULL, RON_SHORT } from './ronTimeline.ts';
+
 export type PromoFxMode = 'full' | 'short' | 'off';
 export const PROMO_FX_MODES: readonly PromoFxMode[] = ['full', 'short', 'off'];
 export const PROMO_FX_KEY = 'shogi.promoFx';
 
-export const FULL_SECONDS = 10;
-export const SHORT_SECONDS = 3.8;
+export const FULL_SECONDS = RON_FULL.end;
+export const SHORT_SECONDS = RON_SHORT.end;
 export const CALM_SECONDS = 2.6;
 
 export function parsePromoFx(value: unknown): PromoFxMode {
@@ -56,7 +58,7 @@ export function nextPromoFx(mode: PromoFxMode): PromoFxMode {
 }
 
 export function promoFxLabel(mode: PromoFxMode): string {
-  return mode === 'full' ? 'フル（約10秒）' : mode === 'short' ? 'ショート（約4秒）' : 'オフ（裏返しのみ）';
+  return mode === 'full' ? 'フル（約10秒）' : mode === 'short' ? 'ショート（約3秒）' : 'オフ（裏返しのみ）';
 }
 
 export function prefersReducedMotion(): boolean {
