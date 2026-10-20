@@ -8,7 +8,7 @@ import { cn } from '../lib/utils.ts';
 import { Koma, SsjAura } from './Koma.tsx';
 import { PromotionFx } from './PromotionFx.tsx';
 import { PromotionCinematic } from './PromotionCinematic.tsx';
-import { loadPromoFx, prefersReducedMotion, resolvePlayback } from '../fx/settings.ts';
+import { loadPromoFxChoice, prefersReducedMotion, resolvePlayback } from '../fx/settings.ts';
 
 const FILE_LABELS = ['１', '２', '３', '４', '５', '６', '７', '８', '９'];
 const RANK_LABELS = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
@@ -50,7 +50,7 @@ export function BoardView({
   const onDoneRef = useRef(onFxDone);
   onDoneRef.current = onFxDone;
   const boardRef = useRef<HTMLDivElement>(null);
-  const playback = useMemo(() => resolvePlayback(loadPromoFx(), prefersReducedMotion()), [fx?.id]);
+  const playback = useMemo(() => resolvePlayback(loadPromoFxChoice(), prefersReducedMotion()), [fx?.id]);
   const cinematic = playback.kind === 'cinematic';
   const king = inCheck ? findKing(state.board, state.turn) : -1;
   const files = flipped ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : [9, 8, 7, 6, 5, 4, 3, 2, 1];

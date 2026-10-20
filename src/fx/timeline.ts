@@ -14,6 +14,8 @@ export interface Timeline {
   settle: number;
   land: number;
   end: number;
+  /** 実時間に対する動きの速さ（1 = フル版と同じ速さ）。粒子の寿命などに掛ける。 */
+  pace: number;
 }
 
 export const FULL_TIMELINE: Timeline = {
@@ -31,31 +33,76 @@ export const FULL_TIMELINE: Timeline = {
   settle: 8.0,
   land: 9.55,
   end: 10,
+  pace: 1,
 };
 
-const CALM_TIMELINE: Timeline = {
-  lift: 0.35,
-  chargeEnd: 0.35,
-  impact: 0.35,
-  flash: 0.36,
-  flipEnd: 0.8,
-  punchEnd: 0.8,
-  kanji: 0.55,
-  slam: 0.75,
-  sub: 0.8,
-  confettiEnd: 0.8,
-  climaxEnd: 1.1,
-  settle: 1.12,
-  land: 1.55,
-  end: 1.6,
+/**
+ * ショート版：溜めを短く切り、爆発〜「成」の叩きつけはフル版と同じ速さで見せる
+ * （全体を早回しにしない）。
+ */
+export const SHORT_TIMELINE: Timeline = {
+  lift: 0.32,
+  chargeEnd: 0.78,
+  impact: 0.78,
+  flash: 0.96,
+  flipEnd: 1.48,
+  punchEnd: 2.06,
+  kanji: 1.36,
+  slam: 1.5,
+  sub: 2.1,
+  confettiEnd: 2.75,
+  climaxEnd: 2.95,
+  settle: 3.0,
+  land: 3.6,
+  end: 3.8,
+  pace: 1,
+};
+
+/** 「動きを減らす」用：揺れ・閃光なし。ゆっくり裏返して光るだけ。 */
+export const CALM_TIMELINE: Timeline = {
+  lift: 0.55,
+  chargeEnd: 0.55,
+  impact: 0.55,
+  flash: 0.57,
+  flipEnd: 1.3,
+  punchEnd: 1.3,
+  kanji: 0.9,
+  slam: 1.2,
+  sub: 1.3,
+  confettiEnd: 1.3,
+  climaxEnd: 1.8,
+  settle: 1.85,
+  land: 2.5,
+  end: 2.6,
+  pace: 1,
 };
 
 export function timelineFor(duration: number, calm: boolean): Timeline {
   if (calm) return CALM_TIMELINE;
+  if (Math.abs(duration - SHORT_TIMELINE.end) < 1e-6) return SHORT_TIMELINE;
   const scale = duration / FULL_TIMELINE.end;
   const out = {} as Timeline;
   for (const key of Object.keys(FULL_TIMELINE) as (keyof Timeline)[]) out[key] = FULL_TIMELINE[key] * scale;
   return out;
+}
+
+/**
+ * 演出の再生位置（秒）。必ず実時間（performance.now のミリ秒）から求め、
+ * フレーム数には一切依存しない。120Hz/144Hz の画面でもコマ落ちしても同じ長さになる。
+ */
+export interface Playhead {
+  /** 再生位置の基準（performance.now 単位のミリ秒）。音の予約と同じ瞬間を指す。 */
+  readonly startMs: number;
+  at(nowMs: number): number;
+  done(nowMs: number): boolean;
+}
+
+export function createPlayhead(startMs: number, tl: Pick<Timeline, 'end'>): Playhead {
+  return {
+    startMs,
+    at: (nowMs) => Math.min(tl.end, Math.max(0, (nowMs - startMs) / 1000)),
+    done: (nowMs) => (nowMs - startMs) / 1000 >= tl.end,
+  };
 }
 
 export type Phase = 'charge' | 'impact' | 'burst' | 'climax' | 'settle' | 'done';

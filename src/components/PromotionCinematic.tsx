@@ -12,6 +12,7 @@ import {
   mulberry32,
   span,
   timelineFor,
+  createPlayhead,
   type Timeline,
 } from '../fx/timeline.ts';
 import type { Color, Move, PieceType } from '../engine/types.ts';
@@ -104,7 +105,7 @@ function buildParticles(seed: number, tl: Timeline, calm: boolean, lite: boolean
   const rand = mulberry32(seed);
   const k = calm ? 0.12 : lite ? 0.5 : 1;
   const diag = Math.hypot(viewport.w, viewport.h);
-  const scale = tl.end / 10;
+  const scale = tl.pace;
   const gather: Gather[] = [];
   const gatherStart = tl.lift * 0.3;
   for (let i = 0; i < Math.round(260 * k); i += 1) {
@@ -241,6 +242,7 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
 
     const sound = startPromotionSound(tl, calm);
     const pattern = hapticPattern(tl, calm);
+    if (pattern.length > 1) pattern[1] = (pattern[1] ?? 0) + Math.round(sound.visualDelayMs);
     if (pattern.length && typeof navigator.vibrate === 'function') {
       try {
         navigator.vibrate(pattern);
@@ -315,12 +317,12 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
       // ----- overlay layers -----
       const dim = Math.min(span(t, 0, tl.lift * 0.8) * (calm ? 0.55 : 0.84), 1 - span(t, tl.settle + (tl.land - tl.settle) * 0.5, tl.end));
       dimRef.current!.style.opacity = String(Math.max(0, dim));
-      const rays = calm ? 0 : span(t, tl.flash, tl.flash + 0.3 * (tl.end / 10)) * (1 - span(t, tl.settle, tl.settle + (tl.land - tl.settle) * 0.6));
+      const rays = calm ? 0 : span(t, tl.flash, tl.flash + 0.3 * tl.pace) * (1 - span(t, tl.settle, tl.settle + (tl.land - tl.settle) * 0.6));
       raysRef.current!.style.opacity = String(rays * 0.85);
       const speedOn = !calm && t >= tl.slam - 0.03 && t < tl.climaxEnd;
       speedRef.current!.style.opacity = speedOn ? String(0.55 + 0.35 * Math.abs(Math.sin(t * 37))) : '0';
       speedRef.current!.style.transform = `translate(-50%, -50%) rotate(${Math.floor(t * 30) * 7}deg) scale(${1 + 0.04 * Math.sin(t * 50)})`;
-      const flash = calm ? 0.0 : 1 - easeOutCubic(span(t, tl.flash, tl.flash + 0.75 * Math.max(0.4, tl.end / 10)));
+      const flash = calm ? 0.0 : 1 - easeOutCubic(span(t, tl.flash, tl.flash + 0.75 * Math.max(0.4, tl.pace)));
       flashRef.current!.style.opacity = String(t >= tl.flash ? flash : 0);
       // impact frames: 黒→白→黒 の3コマ
       const impact = impactRef.current!;
@@ -336,13 +338,13 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
       // ----- 成 slam -----
       const kanji = kanjiRef.current!;
       const star = kanji.firstElementChild as HTMLElement;
-      if (t < tl.kanji || t > tl.settle + 0.4 * (tl.end / 10)) {
+      if (t < tl.kanji || t > tl.settle + 0.4 * tl.pace) {
         kanji.style.opacity = '0';
       } else if (calm) {
         kanji.style.opacity = String(span(t, tl.kanji, tl.slam) * (1 - span(t, tl.climaxEnd, tl.settle + 0.3)));
         kanji.style.transform = 'translate(-50%, -50%) scale(1)';
       } else {
-        const sc = tl.end / 10;
+        const sc = tl.pace;
         const inP = span(t, tl.kanji, tl.slam);
         let s = lerp(6, 1, easeInCubic(inP));
         if (t >= tl.slam) s = 1 + 0.09 * Math.exp(-(t - tl.slam) * 9) * Math.cos((t - tl.slam) * 34);
@@ -357,8 +359,8 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
         star.style.opacity = String(0.94 * (1 - rise * 0.75));
       }
       const sub = subRef.current!;
-      const subP = span(t, tl.sub, tl.sub + 0.35 * Math.max(0.4, tl.end / 10));
-      const subOut = span(t, tl.climaxEnd, tl.settle + 0.3 * (tl.end / 10));
+      const subP = span(t, tl.sub, tl.sub + 0.35 * Math.max(0.4, tl.pace));
+      const subOut = span(t, tl.climaxEnd, tl.settle + 0.3 * tl.pace);
       sub.style.opacity = String(easeOutCubic(subP) * (1 - subOut));
       sub.style.transform = `translate(-50%, ${lerp(28, 0, easeOutCubic(subP))}px)`;
 
@@ -480,13 +482,18 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
     };
 
     let raf = 0;
-    let start = performance.now();
+    // 映像と音は同じ瞬間を 0 秒とする。音は AudioContext 上で同じ秒数に予約済みなので、
+    // 出力遅延ぶんだけ映像の 0 秒を後ろへずらして、爆発や「成」の打撃をぴったり合わせる。
+    let head = createPlayhead(performance.now() + sound.visualDelayMs, tl);
     let paused = false;
-    const finish = () => {
+    let endedNaturally = false;
+    const finish = (skipped: boolean) => {
       if (doneRef.current) return;
       doneRef.current = true;
+      endedNaturally = !skipped;
       cancelAnimationFrame(raf);
-      sound.stop();
+      // 最後まで見たときは残響を自然に残し、スキップしたときは素早く絞る
+      sound.stop(skipped);
       try {
         navigator.vibrate?.(0);
       } catch {
@@ -495,20 +502,21 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
       if (shell) shell.style.transform = '';
       onDoneRef.current();
     };
-    const loop = (now: number) => {
-      const t = (now - start) / 1000;
-      if (t >= tl.end) {
+    // フレームごとに実時間から位置を求める（rAF の回数・間隔には依存しない）
+    const loop = () => {
+      const now = performance.now();
+      if (head.done(now)) {
         render(tl.end);
-        finish();
+        finish(false);
         return;
       }
-      render(t);
+      render(head.at(now));
       raf = requestAnimationFrame(loop);
     };
     render(0);
     raf = requestAnimationFrame(loop);
 
-    const skip = () => finish();
+    const skip = () => finish(true);
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
@@ -528,7 +536,7 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
         play: () => {
           if (!paused) return;
           paused = false;
-          start = performance.now();
+          head = createPlayhead(performance.now(), tl);
           raf = requestAnimationFrame(loop);
         },
       };
@@ -537,7 +545,7 @@ export function PromotionCinematic({ move, color, invert, square, duration, calm
       cancelAnimationFrame(raf);
       root.removeEventListener('click', skip);
       window.removeEventListener('keydown', onKey);
-      sound.stop();
+      if (!endedNaturally) sound.stop(true);
       if (shell) shell.style.transform = '';
       if (window.__promoFx) delete window.__promoFx;
     };
