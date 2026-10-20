@@ -22,6 +22,10 @@ interface BoardViewProps {
   interactive: boolean;
   onSquare: (square: number) => void;
   onFxDone: () => void;
+  /** 目標マス（チュートリアル用の金色リング） */
+  marks?: ReadonlySet<number>;
+  /** 行けない・打てないマス（×印） */
+  ng?: ReadonlySet<number>;
 }
 
 export function BoardView({
@@ -35,6 +39,8 @@ export function BoardView({
   interactive,
   onSquare,
   onFxDone,
+  marks,
+  ng,
 }: BoardViewProps) {
   const [phase, setPhase] = useState<'slide' | 'flip' | null>(null);
   const [slideAtEnd, setSlideAtEnd] = useState(false);
@@ -121,6 +127,7 @@ export function BoardView({
                   selected === index && 'is-selected',
                   king === index && 'is-check',
                   hint && 'is-target',
+                  marks?.has(index) && 'is-mark',
                 )}
                 style={{ gridColumn: place.col + 1, gridRow: place.row + 1 }}
                 data-testid={`square-${index}`}
@@ -130,6 +137,8 @@ export function BoardView({
                 disabled={!interactive}
               >
                 {star ? <i className="star" /> : null}
+                {marks?.has(index) ? <i className="mark" /> : null}
+                {ng?.has(index) && !piece ? <i className="ng-mark" aria-hidden="true" /> : null}
                 {hint ? <i className={hint === 'capture' ? 'hint capture' : 'hint'} /> : null}
                 {piece && !covered ? (
                   <span className={cn('piece-slot', upsideDown && 'is-inverted')}>

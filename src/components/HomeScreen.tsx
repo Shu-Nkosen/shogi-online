@@ -9,12 +9,13 @@ interface HomeScreenProps {
   initialCode?: string;
   error?: string | null;
   onLocal: () => void;
+  onLearn: () => void;
   onAi: (level: Level, human: Color) => void;
   onCreate: () => void;
   onJoin: (code: string) => void;
 }
 
-export function HomeScreen({ initialCode = '', error, onLocal, onAi, onCreate, onJoin }: HomeScreenProps) {
+export function HomeScreen({ initialCode = '', error, onLocal, onLearn, onAi, onCreate, onJoin }: HomeScreenProps) {
   const [level, setLevel] = useState<Level>('normal');
   const [human, setHuman] = useState<Color>('sente');
   const [code, setCode] = useState(initialCode);
@@ -38,6 +39,19 @@ export function HomeScreen({ initialCode = '', error, onLocal, onAi, onCreate, o
         <p className="lead">木目の盤で、ブラウザだけで一局。相手は隣の人でも、別の端末でも、コンピュータでも。</p>
       </div>
       {error ? <p className="banner error">{error}</p> : null}
+      <section className="learn-banner">
+        <div className="learn-koma" aria-hidden="true">
+          <span>歩</span>
+          <span className="is-red">と</span>
+        </div>
+        <div className="learn-copy">
+          <h2>はじめての将棋</h2>
+          <p>駒の動かし方から詰みまで、盤をさわりながら覚えるチュートリアル。ルールを知らなくても大丈夫です。</p>
+        </div>
+        <Button variant="gold" size="lg" onClick={onLearn} data-testid="open-tutorial">
+          チュートリアルを始める
+        </Button>
+      </section>
       <div className="home-grid">
         <section className="plaque">
           <h2>オンライン対局</h2>
