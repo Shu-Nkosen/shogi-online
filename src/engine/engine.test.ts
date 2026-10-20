@@ -209,7 +209,7 @@ describe('drops', () => {
 });
 
 describe('king safety', () => {
-  it('allows only the king to escape a rook check', () => {
+  it('allows only king moves against a rook check when nothing can interpose', () => {
     const state = parseSfen('4r4/9/9/9/9/9/9/9/4K4 b - 1');
     const moves = legalMoves(state);
     expect(moves).toHaveLength(4);
