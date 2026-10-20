@@ -9,6 +9,7 @@ import { useMatch } from '../hooks/useMatch.ts';
 import { soundEnabled, setSoundEnabled } from '../audio.ts';
 import { BoardView } from './BoardView.tsx';
 import { Stand } from './Stand.tsx';
+import { PromoFxSetting } from './PromoFxSetting.tsx';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog.tsx';
 
@@ -134,6 +135,7 @@ export function GameScreen({ config, onLeave }: GameScreenProps) {
             return <span key={`${ply}-${move.to}`}>{formatMove(move, moverOf(ply))}</span>;
           })}
         </div>
+        <PromoFxSetting compact />
         <div className="actions">
           {!match.game.result ? (
             <Button variant="outline" onClick={() => setResignOpen(true)} disabled={config.mode === 'online' && match.presence === 'waiting'}>

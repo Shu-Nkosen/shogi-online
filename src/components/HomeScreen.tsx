@@ -4,6 +4,7 @@ import { levelLabel } from '../ai/search.ts';
 import type { Color } from '../engine/types.ts';
 import { Button } from './ui/button.tsx';
 import { Input } from './ui/input.tsx';
+import { PromoFxSetting } from './PromoFxSetting.tsx';
 
 interface HomeScreenProps {
   initialCode?: string;
@@ -106,6 +107,10 @@ export function HomeScreen({ initialCode = '', error, onLocal, onLearn, onAi, on
           </Button>
         </section>
       </div>
+      <footer className="home-settings">
+        <PromoFxSetting />
+        <p>「フル」は約10秒の変身演出。画面をタップすればいつでもスキップできます。</p>
+      </footer>
     </main>
   );
 }

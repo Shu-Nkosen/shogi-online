@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { playPromote, playWood } from '../audio.ts';
 import { findKing } from '../engine/attack.ts';
 import { formatSquare } from '../engine/notation.ts';
 import { fileOf, pieceChar, rankOf } from '../engine/pieces.ts';
 import type { Color, Move, State } from '../engine/types.ts';
 import { cn } from '../lib/utils.ts';
-import { Koma } from './Koma.tsx';
+import { Koma, SsjAura } from './Koma.tsx';
 import { PromotionFx } from './PromotionFx.tsx';
+import { PromotionCinematic } from './PromotionCinematic.tsx';
+import { loadPromoFx, prefersReducedMotion, resolvePlayback } from '../fx/settings.ts';
 
 const FILE_LABELS = ['１', '２', '３', '４', '５', '６', '７', '８', '９'];
 const RANK_LABELS = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
@@ -47,6 +49,9 @@ export function BoardView({
   const done = useRef(false);
   const onDoneRef = useRef(onFxDone);
   onDoneRef.current = onFxDone;
+  const boardRef = useRef<HTMLDivElement>(null);
+  const playback = useMemo(() => resolvePlayback(loadPromoFx(), prefersReducedMotion()), [fx?.id]);
+  const cinematic = playback.kind === 'cinematic';
   const king = inCheck ? findKing(state.board, state.turn) : -1;
   const files = flipped ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : [9, 8, 7, 6, 5, 4, 3, 2, 1];
   const ranks = flipped ? [9, 8, 7, 6, 5, 4, 3, 2, 1] : [1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -67,7 +72,9 @@ export function BoardView({
       if (done.current || !fx.move.promote) return;
       setPhase((current) => (current === 'slide' ? 'flip' : current));
     }, 420);
-    const backup = window.setTimeout(() => finish(), fx.move.promote ? 3600 : 560);
+    const debugFx = new URLSearchParams(window.location.search).has('fxdebug');
+    const promoMs = debugFx ? 600_000 : playback.kind === 'cinematic' ? playback.duration * 1000 + 2500 : 3600;
+    const backup = window.setTimeout(() => finish(), fx.move.promote ? promoMs : 560);
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(nudge);
@@ -91,16 +98,16 @@ export function BoardView({
   }
 
   useEffect(() => {
-    if (phase === 'flip') playPromote();
+    if (phase === 'flip' && !cinematic) playPromote();
   }, [phase, fx?.id]);
 
   const mover: Color = state.turn === 'sente' ? 'gote' : 'sente';
   const invertMover = flipped ? mover === 'sente' : mover === 'gote';
-  const glow = fx && phase === 'flip' ? anchorOf(fx.move.to, flipped) : null;
+  const glow = fx && phase === 'flip' && !cinematic ? anchorOf(fx.move.to, flipped) : null;
 
   return (
     <div
-      className={cn('board-frame', phase === 'flip' && 'is-promoting')}
+      className={cn('board-frame', phase === 'flip' && !cinematic && 'is-promoting')}
       data-fx={phase ?? ''}
       style={glow ? { ['--glow-x' as string]: glow.left, ['--glow-y' as string]: glow.top } : undefined}
     >
@@ -110,7 +117,7 @@ export function BoardView({
         ))}
       </div>
       <div className="board-row">
-        <div className="board" data-testid="board">
+        <div className="board" data-testid="board" ref={boardRef}>
           {state.board.map((piece, index) => {
             const place = cellOf(index, flipped);
             const hint = targets.get(index);
@@ -142,6 +149,7 @@ export function BoardView({
                 {hint ? <i className={hint === 'capture' ? 'hint capture' : 'hint'} /> : null}
                 {piece && !covered ? (
                   <span className={cn('piece-slot', upsideDown && 'is-inverted')}>
+                    {piece.promoted ? <SsjAura seed={index} /> : null}
                     <Koma type={piece.type} color={piece.color} promoted={piece.promoted} selected={selected === index} />
                   </span>
                 ) : null}
@@ -164,7 +172,19 @@ export function BoardView({
               <Koma type={fx.move.piece} color={mover} promoted={fx.move.alreadyPromoted} />
             </div>
           ) : null}
-          {fx && phase === 'flip' ? (
+          {fx && phase === 'flip' && playback.kind === 'cinematic' ? (
+            <PromotionCinematic
+              key={fx.id}
+              move={fx.move}
+              color={mover}
+              invert={invertMover}
+              square={boardRef.current?.querySelector<HTMLElement>(`[data-testid="square-${fx.move.to}"]`) ?? null}
+              duration={playback.duration}
+              calm={playback.calm}
+              onDone={finish}
+            />
+          ) : null}
+          {fx && phase === 'flip' && !cinematic ? (
             <div className="fx-layer" style={{ left: anchorOf(fx.move.to, flipped).left, top: anchorOf(fx.move.to, flipped).top }}>
               <PromotionFx move={fx.move} color={mover} invert={invertMover} onDone={finish} />
             </div>

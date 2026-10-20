@@ -4,6 +4,7 @@ import { createGame, playMove, resign as resignGame, type PlayedGame } from '../
 import { legalMoves } from '../engine/moves.ts';
 import { toSfen } from '../engine/sfen.ts';
 import type { Color, Move, PieceType } from '../engine/types.ts';
+import { finishFx, initDisplay, isIdle, pushDisplay, resetDisplay, type DisplayState } from '../fx/displayQueue.ts';
 import { startOnline, tabClientId, type LinkStatus, type OnlineHandle } from '../net/mqttMatch.ts';
 import { myColor, type Presence } from '../net/protocol.ts';
 
@@ -22,8 +23,11 @@ interface WorkerResponse {
 }
 
 export function useMatch(config: MatchConfig) {
+  // game: 本当の対局状態（通信・CPU はこちらで即座に進む）
+  // display: 画面に見せている状態。演出中に来た手はキューに積んで順に見せる。
   const [game, setGame] = useState<PlayedGame>(() => createGame());
-  const [fx, setFx] = useState<{ id: number; move: Move } | null>(null);
+  const [display, setDisplay] = useState<DisplayState<PlayedGame>>(() => initDisplay(game));
+  const fx = display.fx;
   const [thinking, setThinking] = useState(false);
   const [link, setLink] = useState<LinkStatus>(config.mode === 'online' ? 'connecting' : 'online');
   const [presence, setPresence] = useState<Presence>(config.mode === 'online' ? 'waiting' : 'live');
@@ -31,26 +35,19 @@ export function useMatch(config: MatchConfig) {
   const [selected, setSelected] = useState<Selection>(null);
   const [pending, setPending] = useState<Move[] | null>(null);
   const gameRef = useRef(game);
-  const fxRef = useRef(fx);
   const onlineRef = useRef<OnlineHandle | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const searchId = useRef(0);
-  const fxId = useRef(0);
   gameRef.current = game;
-  fxRef.current = fx;
 
   const viewer: Color = config.mode === 'ai' ? config.human : config.mode === 'online' ? myColor(config.role) : 'sente';
 
   function showMove(next: PlayedGame, animate: Move | null) {
+    gameRef.current = next;
     setGame(next);
+    setDisplay((current) => pushDisplay(current, next, animate));
     setSelected(null);
     setPending(null);
-    if (animate && animate.from !== null) {
-      fxId.current += 1;
-      const nextFx = { id: fxId.current, move: animate };
-      fxRef.current = nextFx;
-      setFx(nextFx);
-    }
   }
 
   useEffect(() => {
@@ -91,7 +88,8 @@ export function useMatch(config: MatchConfig) {
 
   useEffect(() => {
     if (config.mode !== 'ai') return undefined;
-    if (game.result || fx || thinking) return undefined;
+    // 演出中でも裏で読み始める（指し手の表示は演出が終わるまでキューで待つ）
+    if (game.result || thinking) return undefined;
     if (game.state.turn === config.human) return undefined;
     const worker = workerRef.current;
     if (!worker) return undefined;
@@ -100,7 +98,7 @@ export function useMatch(config: MatchConfig) {
     setThinking(true);
     worker.postMessage({ type: 'go', id, sfen: toSfen(game.state), level: config.level });
     return undefined;
-  }, [config, game, fx, thinking]);
+  }, [config, game, thinking]);
 
   useEffect(() => {
     if (config.mode !== 'online') return undefined;
@@ -123,14 +121,14 @@ export function useMatch(config: MatchConfig) {
   }, [config.mode, config.mode === 'online' ? config.room : '', config.mode === 'online' ? config.role : '']);
 
   const controllable = useMemo(() => {
-    if (game.result || fx || pending) return false;
+    if (game.result || !isIdle(display) || pending) return false;
     if (config.mode === 'local') return true;
     if (config.mode === 'ai') return game.state.turn === config.human && !thinking;
     const mine = myColor(config.role);
     if (game.state.turn !== mine || link !== 'online' || error) return false;
     if (config.role === 'host') return presence === 'live' || presence === 'away';
     return presence === 'live';
-  }, [config, error, fx, game.result, game.state.turn, link, pending, presence, thinking]);
+  }, [config, display, error, game.result, game.state.turn, link, pending, presence, thinking]);
 
   function commit(move: Move) {
     if (config.mode === 'online') {
@@ -200,26 +198,31 @@ export function useMatch(config: MatchConfig) {
       return;
     }
     const color: Color = config.mode === 'ai' ? config.human : gameRef.current.state.turn;
-    setGame(resignGame(gameRef.current, color));
+    const resigned = resignGame(gameRef.current, color);
+    gameRef.current = resigned;
+    setGame(resigned);
+    setDisplay((current) => pushDisplay(current, resigned, null));
     setSelected(null);
   }
 
   function reset() {
     setSelected(null);
     setPending(null);
-    setFx(null);
     setError(null);
     if (config.mode === 'online') {
       onlineRef.current?.reset();
       return;
     }
-    setGame(createGame());
+    const fresh = createGame();
+    gameRef.current = fresh;
+    setGame(fresh);
+    setDisplay((current) => resetDisplay(current, fresh));
   }
 
   const targets = useMemo(() => {
     const map = new Map<number, 'move' | 'capture'>();
     if (!selected || !controllable) return map;
-    for (const move of legalMoves(game.state)) {
+    for (const move of legalMoves(display.shown.state)) {
       const hit =
         selected.kind === 'board'
           ? move.from === selected.square
@@ -228,10 +231,10 @@ export function useMatch(config: MatchConfig) {
       map.set(move.to, move.capture ? 'capture' : map.get(move.to) ?? 'move');
     }
     return map;
-  }, [controllable, game, selected]);
+  }, [controllable, display, selected]);
 
   return {
-    game,
+    game: display.shown,
     fx,
     thinking,
     link,
@@ -246,7 +249,7 @@ export function useMatch(config: MatchConfig) {
     onHand,
     choosePromotion,
     cancelPromotion: () => setPending(null),
-    clearFx: () => setFx(null),
+    clearFx: () => setDisplay((current) => finishFx(current)),
     resign,
     reset,
   };
